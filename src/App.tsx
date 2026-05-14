@@ -1,5 +1,5 @@
-import { useState, useMemo, useEffect } from 'react';
-import { Tldraw, createTLStore, defaultShapeUtils, getSnapshot } from 'tldraw'
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { Tldraw, createTLStore, defaultShapeUtils } from 'tldraw'
 import 'tldraw/tldraw.css'
 import { AIPanel } from './ai/AIPanel'
 import './ai/AIPanel.css'
@@ -8,37 +8,54 @@ const STORAGE_KEY = 'taopipi-canvas-v1'
 
 function App() {
   const [showAIPanel, setShowAIPanel] = useState(false)
+  const [ready, setReady] = useState(false)
+  const saveTimerRef = useRef(null)
 
   const store = useMemo(() => {
-    let snapshot
+    const s = createTLStore({ shapeUtils: defaultShapeUtils })
+
+    // 从 localStorage 恢复画布数据
     try {
       const saved = localStorage.getItem(STORAGE_KEY)
       if (saved) {
-        snapshot = JSON.parse(saved)
-        console.log('画布数据已恢复')
+        const snapshot = JSON.parse(saved)
+        if (snapshot.store && snapshot.schema) {
+          s.loadStoreSnapshot(snapshot)
+          console.log('画布数据已恢复')
+        }
       }
     } catch (e) {
       console.error('读取画布数据失败', e)
     }
 
-    return createTLStore({
-      shapeUtils: defaultShapeUtils,
-      ...(snapshot ? { snapshot } : {}),
-    })
+    return s
   }, [])
 
-  // 自动保存到 localStorage
+  // 自动保存到 localStorage（带防抖，等 Tldraw 组件挂载完毕）
   useEffect(() => {
+    const timer = setTimeout(() => setReady(true), 500)
+    return () => clearTimeout(timer)
+  }, [])
+
+  useEffect(() => {
+    if (!ready) return
+
     const cleanup = store.listen(() => {
-      try {
-        const snapshot = getSnapshot(store)
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot))
-      } catch (e) {
-        console.error('保存画布数据失败', e)
-      }
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = setTimeout(() => {
+        try {
+          const snapshot = store.getStoreSnapshot()
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot))
+        } catch (e) {
+          console.error('保存画布数据失败', e)
+        }
+      }, 300)
     })
-    return cleanup
-  }, [store])
+    return () => {
+      cleanup()
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    }
+  }, [store, ready])
 
   return (
     <div style={{ position: 'fixed', inset: 0 }}>
